@@ -1,0 +1,1199 @@
+# PayFlow / IntelliJ IDEA HTTP Client
+# All URLs, headers and request data are literal, following the supplied example.
+# Only server-generated UUIDs are captured from responses for dependent requests.
+# Run from top to bottom on a freshly started application (H2 in-memory).
+# Running just one dependent request requires that its creation request has been run first.
+# URL: http://localhost:8080 ; no baseUrl or http-client.env.json needed.
+# Scenarios expecting 400/404/405/409 intentionally send invalid data.
+# merchantId is a query string for GET/PROCESS/CANCEL; body for CREATE.
+
+### 01 — نمونه خودت: ایجاد پرداخت اولیه (expected HTTP 201)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: 15555555
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "616516565165",
+  "amount": 125000.50,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 201", function () {
+        client.assert(response.status === 201, "Expected 201, got " + response.status);
+    });
+    if (response.status === 201 && response.body && response.body.id) {
+        client.global.set("payflowBaseId", response.body.id);
+    }
+    if (response.status === 201) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.merchantId === "65155515656", "merchantId نادرست است");
+            client.assert(response.body.merchantReference === "616516565165", "merchantReference نادرست است");
+            client.assert(response.body.status === "PENDING", "وضعیت اولیه باید PENDING باشد");
+        });
+    }
+%}
+
+### 02 — دریافت مشخصات پرداخت اولیه (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments/{{payflowBaseId}}?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.id === client.global.get("payflowBaseId"), "شناسه دریافتی یکسان نیست");
+        });
+    }
+%}
+
+### 03 — تاریخچه اولیه: یک وضعیت PENDING (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments/{{payflowBaseId}}/history?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(Array.isArray(response.body), "پاسخ باید آرایه باشد");
+            client.assert(response.body.length === 1, "تاریخچه اولیه باید یک رکورد داشته باشد");
+            client.assert(response.body[0].newStatus === "PENDING", "اولین وضعیت باید PENDING باشد");
+        });
+    }
+%}
+
+### 04 — تکرار دقیق همان درخواست: بدون ایجاد پرداخت جدید (expected HTTP 201)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: 15555555
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "616516565165",
+  "amount": 125000.50,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 201", function () {
+        client.assert(response.status === 201, "Expected 201, got " + response.status);
+    });
+    if (response.status === 201) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.id === client.global.get("payflowBaseId"), "Idempotency باید همان شناسه را برگرداند");
+        });
+    }
+%}
+
+### 05 — تکرار همان کلید با مبلغ متفاوت: 409 (expected HTTP 409)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: 15555555
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "616516565165",
+  "amount": 800000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 409", function () {
+        client.assert(response.status === 409, "Expected 409, got " + response.status);
+    });
+%}
+
+### 06 — تکرار همان کلید با مرجع متفاوت: 409 (expected HTTP 409)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: 15555555
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-CHANGED-100",
+  "amount": 125000.50,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 409", function () {
+        client.assert(response.status === 409, "Expected 409, got " + response.status);
+    });
+%}
+
+### 07 — همان کلید برای پذیرنده متفاوت مجاز است (expected HTTP 201)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: 15555555
+
+{
+  "merchantId": "65155515657",
+  "merchantReference": "SECOND-MERCHANT-1001",
+  "amount": 125000.50,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 201", function () {
+        client.assert(response.status === 201, "Expected 201, got " + response.status);
+    });
+    if (response.status === 201 && response.body && response.body.id) {
+        client.global.set("payflowSecondMerchantId", response.body.id);
+    }
+%}
+
+### 08 — یک شناسه سفارش با کلید متفاوت مجاز است (expected HTTP 201)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: PAYFLOW-2026-NEW-KEY-1001
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "616516565165",
+  "amount": 125000.50,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 201", function () {
+        client.assert(response.status === 201, "Expected 201, got " + response.status);
+    });
+    if (response.status === 201 && response.body && response.body.id) {
+        client.global.set("payflowSameOrderNewPaymentId", response.body.id);
+    }
+%}
+
+### 09 — ساخت پرداخت سناریوی موفق (expected HTTP 201)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: PAYFLOW-2026-SUCCESS-1001
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-SUCCESS-1001",
+  "amount": 750000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 201", function () {
+        client.assert(response.status === 201, "Expected 201, got " + response.status);
+    });
+    if (response.status === 201 && response.body && response.body.id) {
+        client.global.set("payflowSuccessId", response.body.id);
+    }
+%}
+
+### 10 — پردازش پرداخت موفق و دریافت کد 00 (expected HTTP 200)
+POST http://localhost:8080/api/v1/payments/{{payflowSuccessId}}/process?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.status === "SUCCESS", "وضعیت باید SUCCESS شود");
+            client.assert(response.body.gatewayResponseCode === "00", "کد موفقیت درگاه باید 00 باشد");
+            client.assert(response.body.gatewayTransactionId && response.body.gatewayTransactionId.startsWith("SIM-"), "شناسه درگاه باید با SIM- آغاز شود");
+        });
+    }
+%}
+
+### 11 — دریافت پرداخت موفق (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments/{{payflowSuccessId}}?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.status === "SUCCESS", "وضعیت نهایی باید SUCCESS باشد");
+        });
+    }
+%}
+
+### 12 — تاریخچه پرداخت موفق: سه تغییر (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments/{{payflowSuccessId}}/history?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(Array.isArray(response.body) && response.body.length === 3, "تاریخچه موفق باید سه رکورد داشته باشد");
+            client.assert(response.body[0].newStatus === "PENDING", "مرحله اول باید PENDING باشد");
+            client.assert(response.body[1].newStatus === "PROCESSING", "مرحله دوم باید PROCESSING باشد");
+            client.assert(response.body[2].newStatus === "SUCCESS", "مرحله آخر باید SUCCESS باشد");
+        });
+    }
+%}
+
+### 13 — پردازش مجدد پرداخت موفق: 409 (expected HTTP 409)
+POST http://localhost:8080/api/v1/payments/{{payflowSuccessId}}/process?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 409", function () {
+        client.assert(response.status === 409, "Expected 409, got " + response.status);
+    });
+%}
+
+### 14 — لغو پرداخت موفق: 409 (expected HTTP 409)
+POST http://localhost:8080/api/v1/payments/{{payflowSuccessId}}/cancel?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 409", function () {
+        client.assert(response.status === 409, "Expected 409, got " + response.status);
+    });
+%}
+
+### 15 — ساخت پرداخت برای شبیه سازی شکست (expected HTTP 201)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: PAYFLOW-2026-FAILED-1001
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "FAIL-ORDER-1001",
+  "amount": 100000.25,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 201", function () {
+        client.assert(response.status === 201, "Expected 201, got " + response.status);
+    });
+    if (response.status === 201 && response.body && response.body.id) {
+        client.global.set("payflowFailedId", response.body.id);
+    }
+%}
+
+### 16 — پردازش ناموفق درگاه، کد 05 (expected HTTP 200)
+POST http://localhost:8080/api/v1/payments/{{payflowFailedId}}/process?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.status === "FAILED", "وضعیت باید FAILED باشد");
+            client.assert(response.body.gatewayResponseCode === "05", "کد پاسخ درگاه باید 05 باشد");
+        });
+    }
+%}
+
+### 17 — دریافت پرداخت ناموفق (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments/{{payflowFailedId}}?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.status === "FAILED", "وضعیت باید FAILED باشد");
+        });
+    }
+%}
+
+### 18 — تاریخچه پرداخت ناموفق (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments/{{payflowFailedId}}/history?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(Array.isArray(response.body) && response.body.length === 3, "تاریخچه شکست باید سه رکورد داشته باشد");
+            client.assert(response.body[2].newStatus === "FAILED", "آخرین وضعیت باید FAILED باشد");
+        });
+    }
+%}
+
+### 19 — پردازش مجدد پرداخت ناموفق: 409 (expected HTTP 409)
+POST http://localhost:8080/api/v1/payments/{{payflowFailedId}}/process?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 409", function () {
+        client.assert(response.status === 409, "Expected 409, got " + response.status);
+    });
+%}
+
+### 20 — لغو پرداخت ناموفق: 409 (expected HTTP 409)
+POST http://localhost:8080/api/v1/payments/{{payflowFailedId}}/cancel?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 409", function () {
+        client.assert(response.status === 409, "Expected 409, got " + response.status);
+    });
+%}
+
+### 21 — ساخت پرداخت برای سناریوی لغو (expected HTTP 201)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: PAYFLOW-2026-CANCEL-1001
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-CANCEL-1001",
+  "amount": 350000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 201", function () {
+        client.assert(response.status === 201, "Expected 201, got " + response.status);
+    });
+    if (response.status === 201 && response.body && response.body.id) {
+        client.global.set("payflowCancelledId", response.body.id);
+    }
+%}
+
+### 22 — لغو پرداخت PENDING با موفقیت (expected HTTP 200)
+POST http://localhost:8080/api/v1/payments/{{payflowCancelledId}}/cancel?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.status === "CANCELLED", "وضعیت باید CANCELLED باشد");
+        });
+    }
+%}
+
+### 23 — دریافت پرداخت لغو شده (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments/{{payflowCancelledId}}?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.status === "CANCELLED", "وضعیت باید CANCELLED باشد");
+        });
+    }
+%}
+
+### 24 — تاریخچه لغو: دو وضعیت (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments/{{payflowCancelledId}}/history?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(Array.isArray(response.body) && response.body.length === 2, "تاریخچه لغو باید دو رکورد داشته باشد");
+            client.assert(response.body[1].newStatus === "CANCELLED", "وضعیت آخر باید CANCELLED باشد");
+        });
+    }
+%}
+
+### 25 — لغو دوباره پرداخت لغوشده: 409 (expected HTTP 409)
+POST http://localhost:8080/api/v1/payments/{{payflowCancelledId}}/cancel?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 409", function () {
+        client.assert(response.status === 409, "Expected 409, got " + response.status);
+    });
+%}
+
+### 26 — پردازش پرداخت لغوشده: 409 (expected HTTP 409)
+POST http://localhost:8080/api/v1/payments/{{payflowCancelledId}}/process?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 409", function () {
+        client.assert(response.status === 409, "Expected 409, got " + response.status);
+    });
+%}
+
+### 27 — ساخت پرداخت در انتظار اول برای لیست (expected HTTP 201)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: PAYFLOW-2026-PENDING-1001
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-PENDING-1001",
+  "amount": 250000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 201", function () {
+        client.assert(response.status === 201, "Expected 201, got " + response.status);
+    });
+    if (response.status === 201 && response.body && response.body.id) {
+        client.global.set("payflowPendingId", response.body.id);
+    }
+%}
+
+### 28 — ساخت پرداخت در انتظار دوم برای لیست (expected HTTP 201)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: PAYFLOW-2026-PENDING-1002
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-PENDING-1002",
+  "amount": 670000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 201", function () {
+        client.assert(response.status === 201, "Expected 201, got " + response.status);
+    });
+    if (response.status === 201 && response.body && response.body.id) {
+        client.global.set("payflowPending2Id", response.body.id);
+    }
+%}
+
+### 29 — لیست همه پرداخت‌های پذیرنده (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(Array.isArray(response.body.content), "خروجی لیست باید دارای content باشد");
+        });
+    }
+%}
+
+### 30 — لیست فقط PENDING (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments?merchantId=65155515656&status=PENDING
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.content.every(p => p.status === "PENDING"), "فیلتر PENDING درست عمل نکرد");
+        });
+    }
+%}
+
+### 31 — لیست فقط SUCCESS (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments?merchantId=65155515656&status=SUCCESS
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.content.some(p => p.id === client.global.get("payflowSuccessId")), "پرداخت موفق باید در نتایج باشد");
+        });
+    }
+%}
+
+### 32 — لیست فقط FAILED (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments?merchantId=65155515656&status=FAILED
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.content.some(p => p.id === client.global.get("payflowFailedId")), "پرداخت ناموفق باید در نتایج باشد");
+        });
+    }
+%}
+
+### 33 — لیست فقط CANCELLED (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments?merchantId=65155515656&status=CANCELLED
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.content.some(p => p.id === client.global.get("payflowCancelledId")), "پرداخت لغوشده باید در نتایج باشد");
+        });
+    }
+%}
+
+### 34 — لیست PROCESSING پس از پردازش همزمان بدون مورد (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments?merchantId=65155515656&status=PROCESSING
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.content.every(p => p.status === "PROCESSING"), "فیلتر PROCESSING درست نیست");
+        });
+    }
+%}
+
+### 35 — صفحه اول با اندازه یک (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments?merchantId=65155515656&page=0&size=1&sort=amount,asc
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.content.length === 1, "صفحه اول باید یک آیتم داشته باشد");
+        });
+    }
+%}
+
+### 36 — صفحه دوم با اندازه یک (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments?merchantId=65155515656&page=1&size=1&sort=amount,asc
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.content.length === 1, "صفحه دوم باید یک آیتم داشته باشد");
+        });
+    }
+%}
+
+### 37 — لیست پرداخت‌های پذیرنده دوم (expected HTTP 200)
+GET http://localhost:8080/api/v1/payments?merchantId=65155515657
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 200", function () {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+    if (response.status === 200) {
+        client.test("Response content is correct", function () {
+            client.assert(response.body.content.some(p => p.id === client.global.get("payflowSecondMerchantId")), "پرداخت پذیرنده دوم باید دیده شود");
+            client.assert(response.body.content.every(p => p.merchantId === "65155515657"), "فقط پرداخت‌های پذیرنده دوم باید نمایش داده شود");
+        });
+    }
+%}
+
+### 38 — فیلتر وضعیت ناشناخته: 400 (expected HTTP 400)
+GET http://localhost:8080/api/v1/payments?merchantId=65155515656&status=UNKNOWN
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 39 — لیست بدون merchantId: 400 (expected HTTP 400)
+GET http://localhost:8080/api/v1/payments
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 40 — لیست با merchantId خالی: 400 (expected HTTP 400)
+GET http://localhost:8080/api/v1/payments?merchantId=
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 41 — دریافت UUID موجود نیست: 404 (expected HTTP 404)
+GET http://localhost:8080/api/v1/payments/00000000-0000-0000-0000-000000000000?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 404", function () {
+        client.assert(response.status === 404, "Expected 404, got " + response.status);
+    });
+%}
+
+### 42 — دریافت پرداخت با پذیرنده اشتباه: 404 (expected HTTP 404)
+GET http://localhost:8080/api/v1/payments/{{payflowSuccessId}}?merchantId=65155515657
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 404", function () {
+        client.assert(response.status === 404, "Expected 404, got " + response.status);
+    });
+%}
+
+### 43 — پردازش UUID ناموجود: 404 (expected HTTP 404)
+POST http://localhost:8080/api/v1/payments/00000000-0000-0000-0000-000000000000/process?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 404", function () {
+        client.assert(response.status === 404, "Expected 404, got " + response.status);
+    });
+%}
+
+### 44 — لغو UUID ناموجود: 404 (expected HTTP 404)
+POST http://localhost:8080/api/v1/payments/00000000-0000-0000-0000-000000000000/cancel?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 404", function () {
+        client.assert(response.status === 404, "Expected 404, got " + response.status);
+    });
+%}
+
+### 45 — تاریخچه UUID ناموجود: 404 (expected HTTP 404)
+GET http://localhost:8080/api/v1/payments/00000000-0000-0000-0000-000000000000/history?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 404", function () {
+        client.assert(response.status === 404, "Expected 404, got " + response.status);
+    });
+%}
+
+### 46 — تاریخچه پرداخت با پذیرنده اشتباه: 404 (expected HTTP 404)
+GET http://localhost:8080/api/v1/payments/{{payflowSuccessId}}/history?merchantId=65155515657
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 404", function () {
+        client.assert(response.status === 404, "Expected 404, got " + response.status);
+    });
+%}
+
+### 47 — دریافت با UUID نامعتبر: 400 (expected HTTP 400)
+GET http://localhost:8080/api/v1/payments/not-a-uuid?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 48 — پردازش با UUID نامعتبر: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments/not-a-uuid/process?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 49 — لغو با UUID نامعتبر: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments/not-a-uuid/cancel?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 50 — تاریخچه با UUID نامعتبر: 400 (expected HTTP 400)
+GET http://localhost:8080/api/v1/payments/not-a-uuid/history?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 51 — پردازش بدون merchantId: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments/{{payflowPendingId}}/process
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 52 — لغو بدون merchantId: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments/{{payflowPendingId}}/cancel
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 53 — دریافت بدون merchantId: 400 (expected HTTP 400)
+GET http://localhost:8080/api/v1/payments/{{payflowPendingId}}
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 54 — درخواست ایجاد بدون هدر Idempotency-Key: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-NO-KEY",
+  "amount": 1000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 55 — درخواست ایجاد با کلید خالی: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: 
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-EMPTY-KEY",
+  "amount": 1000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 56 — درخواست ایجاد با کلید بیش از 100 کاراکتر: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-LONG-KEY",
+  "amount": 1000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 57 — merchantId خالی: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-001
+
+{
+  "merchantId": "",
+  "merchantReference": "ORDER-VAL-001",
+  "amount": 1000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 58 — merchantId حذف شده: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-002
+
+{
+  "merchantReference": "ORDER-VAL-002",
+  "amount": 1000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 59 — merchantId طولانی‌تر از 100: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-003
+
+{
+  "merchantId": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+  "merchantReference": "ORDER-VAL-003",
+  "amount": 1000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 60 — merchantReference خالی: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-004
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "",
+  "amount": 1000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 61 — merchantReference حذف شده: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-005
+
+{
+  "merchantId": "65155515656",
+  "amount": 1000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 62 — merchantReference طولانی‌تر از 100: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-006
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
+  "amount": 1000.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 63 — amount حذف شده: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-007
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-VAL-007",
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 64 — amount برابر null: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-008
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-VAL-008",
+  "amount": null,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 65 — amount صفر: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-009
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-VAL-009",
+  "amount": 0,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 66 — amount منفی: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-010
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-VAL-010",
+  "amount": -50.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 67 — amount با سه رقم اعشار: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-011
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-VAL-011",
+  "amount": 1000.123,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 68 — amount با بیش از 17 رقم صحیح: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-012
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-VAL-012",
+  "amount": 123456789012345678.00,
+  "currency": "IRR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 69 — currency حذف شده: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-013
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-VAL-013",
+  "amount": 1000.00
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 70 — currency با حروف کوچک: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-014
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-VAL-014",
+  "amount": 1000.00,
+  "currency": "irr"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 71 — currency دو حرفی: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-015
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-VAL-015",
+  "amount": 1000.00,
+  "currency": "IR"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 72 — currency با رقم: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-016
+
+{
+  "merchantId": "65155515656",
+  "merchantReference": "ORDER-VAL-016",
+  "amount": 1000.00,
+  "currency": "123"
+}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 73 — بدنه JSON خالی: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-017
+
+{}
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 74 — بدنه JSON با قالب اشتباه: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Content-Type: application/json
+Idempotency-Key: VAL-2026-018
+
+{"merchantId":"65155515656", "amount": }
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 75 — عدم ارسال body: 400 (expected HTTP 400)
+POST http://localhost:8080/api/v1/payments
+Accept: application/json
+Idempotency-Key: VAL-2026-019
+
+> {%
+    client.test("HTTP status should be 400", function () {
+        client.assert(response.status === 400, "Expected 400, got " + response.status);
+    });
+%}
+
+### 76 — متد GET برای endpoint پردازش: 405 (expected HTTP 405)
+GET http://localhost:8080/api/v1/payments/{{payflowPendingId}}/process?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 405", function () {
+        client.assert(response.status === 405, "Expected 405, got " + response.status);
+    });
+%}
+
+### 77 — متد DELETE برای endpoint پرداخت: 405 (expected HTTP 405)
+DELETE http://localhost:8080/api/v1/payments/{{payflowPendingId}}?merchantId=65155515656
+Accept: application/json
+
+> {%
+    client.test("HTTP status should be 405", function () {
+        client.assert(response.status === 405, "Expected 405, got " + response.status);
+    });
+%}
