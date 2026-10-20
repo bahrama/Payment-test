@@ -1,11 +1,3 @@
-# PayFlow / IntelliJ IDEA HTTP Client
-# All URLs, headers and request data are literal, following the supplied example.
-# Only server-generated UUIDs are captured from responses for dependent requests.
-# Run from top to bottom on a freshly started application (H2 in-memory).
-# Running just one dependent request requires that its creation request has been run first.
-# URL: http://localhost:8080 ; no baseUrl or http-client.env.json needed.
-# Scenarios expecting 400/404/405/409 intentionally send invalid data.
-# merchantId is a query string for GET/PROCESS/CANCEL; body for CREATE.
 
 ### 01 — نمونه خودت: ایجاد پرداخت اولیه (expected HTTP 201)
 POST http://localhost:8080/api/v1/payments
